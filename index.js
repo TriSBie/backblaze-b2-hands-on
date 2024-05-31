@@ -3,6 +3,13 @@ const B2 = require('backblaze-b2');
 const multer = require('multer');
 const dotenv = require('dotenv');
 const fs = require('fs');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const ffmpeg = require('fluent-ffmpeg');
+const stream = require('stream');
+const { default: axios } = require('axios');
+
+ffmpeg.setFfmpegPath(ffmpegPath);
+
 dotenv.config()
 
 const app = express();
@@ -11,6 +18,7 @@ const upload = multer({ dest: 'uploads/' });
 app.use(express.json());
 const port = 3000;
 
+let
 const b2 = new B2({
     applicationKeyId: process.env.APPLICATION_ID, // or accountId: 'accountId'
     applicationKey: process.env.APPLICATION_KEY // or masterApplicationKey
@@ -18,16 +26,18 @@ const b2 = new B2({
 
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB chunk size
 
+/** NOTE : EVERY UPLOAD IN BACKBLAZE SHOULD CONTAIN AUTHORIZATION TOKEN */
+b2.authorize().then(() => {
+    console.log('B2 authorization successful');
+    return b2.getUploadUrl({ bucketId: process.env.BUCKET_ID });
+}).then((response) => {
+    console.log('Upload URL:', response.data.uploadUrl);
+}).catch(err => {
+    console.error('Error authorizing B2', err);
+});
 
-// Start Large File Upload
-async function startLargeFileUpload(bucketId, fileName) {
-    const response = await b2.startLargeFile({
-        bucketId,
-        fileName,
-        contentType: 'application/octet-stream',
-    });
-    return response.data.fileId;
-}
+
+
 // Upload File Part
 async function uploadPart(fileId, partNumber, partData) {
     const response = await b2.getUploadPartUrl({ fileId });
@@ -45,16 +55,7 @@ async function uploadPart(fileId, partNumber, partData) {
     return uploadResponse.data;
 }
 
-/** NOTE : EVERY UPLOAD IN BACKBLAZE SHOULD CONTAIN AUTHORIZATION TOKEN */
-b2.authorize().then(() => {
-    console.log('B2 authorization successful');
-    return b2.getUploadUrl({
-        bucketId: process.env.BUCKET_ID // or bucketName: 'bucketName
-    })
-})
-    .catch(err => {
-        console.error('Error authorizing B2', err);
-    });
+
 
 app.get('/', (req, res) => {
     res.send('Hello, World!');
@@ -172,20 +173,83 @@ app.post("/finish-upload", async (req, res) => {
     }
 });
 
-app.get("/download", async (req, res) => {
-    const fileName = req.query.fileName;
+
+app.get("/download/:fileName", async (req, res) => {
+    // const filePath = "uploads/mas.mp4";
+    const fileName = req.params.fileName;
+    console.log('File fileName:', fileName)
     try {
+
         const response = await b2.downloadFileByName({
             bucketName: process.env.BUCKET_NAME,
             fileName,
+            responseType: 'stream',
         });
 
-        res.status(200).send({ message: 'File downloaded', data: response.data });
+        if (!response) {
+            res.status(404).send({ error: 'File not found' });
+            return;
+        }
+
+        const range = req.headers.range;
+        if (!range) {
+            res.status(400).send('Requires Range header');
+            return;
+        }
+        const videoId = '4_z33d15916f772c01486fd0d1c_f24649063c77588b7_d20240531_m122545_c002_v0001111_t0038_u01717158345886';
+
+        const videoInfo = await b2.getFileInfo({ fileId: videoId });
+        const videoSize = videoInfo.data.contentLength;
+
+        const start = Number(range.replace(/\D/g, ''));
+        const end = Math.min(start + 10 ** 6, videoSize - 1);
+
+        const contentLength = (end - start) + 1;
+        const header = {
+            'Content-Range': `bytes ${start}-${end}/${videoSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': contentLength,
+            'Content-Type': 'video/mp4',
+        };
+
+        res.writeHead(206, header);
+        const fileResponse = await axios({
+            method: 'get',
+            url: `https://f000.backblazeb2.com/file/YOUR_BUCKET_NAME/${videoId}`,
+            responseType: 'stream',
+            headers: {
+                'Authorization': `Bearer ${b2.authorizationToken}`,
+                'Range': `bytes=${start}-${end}`
+            }
+        });
+
     } catch (error) {
         console.error('Error downloading file:', error);
         res.status(500).send({ error: 'File download failed', details: error.message });
     }
 })
+
+
+
+app.get('/video/:fileName', (req, res) => {
+    const fileName = req.params.fileName;
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Video Player</title>
+      </head>
+      <body>
+        <video width="800" controls>
+          <source src="/download/${fileName}" type="video/mp4">
+          Your browser does not support the video tag.
+        </video>
+      </body>
+      </html>
+    `);
+});
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
