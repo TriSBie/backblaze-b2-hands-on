@@ -2,11 +2,13 @@ const express = require('express');
 const B2 = require('backblaze-b2');
 const multer = require('multer');
 const dotenv = require('dotenv');
+const fs = require('fs');
 dotenv.config()
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
+app.use(express.json());
 const port = 3000;
 
 const b2 = new B2({
@@ -60,7 +62,7 @@ app.get('/', (req, res) => {
 
 /**
  * Initiate file upload
- * 
+ *  
  */
 app.post("/initiate-upload", async (req, res) => {
     const fileName = req.query.fileName
@@ -122,6 +124,7 @@ app.post('/upload-part', upload.single('filePart'), async (req, res) => {
     try {
         const fileId = req.query.fileId;
         const partNumber = parseInt(req.query.partNumber, 10);
+        console.log(req.file)
         const filePath = req.file.path;
         const fileData = fs.readFileSync(filePath);
 
@@ -139,6 +142,7 @@ app.post('/upload-part', upload.single('filePart'), async (req, res) => {
         });
 
         fs.unlinkSync(filePath);
+        console.log('File part uploaded data:', uploadResponse.data)
 
         res.status(200).send({
             partNumber,
@@ -147,9 +151,41 @@ app.post('/upload-part', upload.single('filePart'), async (req, res) => {
         });
     } catch (error) {
         console.error('Error uploading file part:', error);
-        res.status(500).send({ error: 'Failed to upload file part' });
+        res.status(500).send({ error: new Error('File part upload failed'), details: error.message });
     }
 });
+
+app.post("/finish-upload", async (req, res) => {
+    const fileId = req.query.fileId;
+    const partSha1Array = req.body.partSha1Array;
+    console.log('File ID:', fileId, 'Part SHA1 Array:', partSha1Array)
+    try {
+        const response = await b2.finishLargeFile({
+            fileId,
+            partSha1Array,
+        });
+
+        res.status(200).send({ message: 'File upload completed', data: response.data });
+    } catch (error) {
+        console.error('Error finishing file upload:', error);
+        res.status(500).send({ error: 'File upload completion failed', details: error.message });
+    }
+});
+
+app.get("/download", async (req, res) => {
+    const fileName = req.query.fileName;
+    try {
+        const response = await b2.downloadFileByName({
+            bucketName: process.env.BUCKET_NAME,
+            fileName,
+        });
+
+        res.status(200).send({ message: 'File downloaded', data: response.data });
+    } catch (error) {
+        console.error('Error downloading file:', error);
+        res.status(500).send({ error: 'File download failed', details: error.message });
+    }
+})
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
