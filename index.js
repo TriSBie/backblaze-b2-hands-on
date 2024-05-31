@@ -1,6 +1,8 @@
 const express = require('express');
 const B2 = require('backblaze-b2');
 const multer = require('multer');
+const dotenv = require('dotenv');
+dotenv.config()
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -8,9 +10,10 @@ const upload = multer({ dest: 'uploads/' });
 const port = 3000;
 
 const b2 = new B2({
-    applicationKeyId: '319672046ddc', // or accountId: 'accountId'
-    applicationKey: '00211b631de68bdb3cb94ecc58fc41547571bcf6be' // or masterApplicationKey
+    applicationKeyId: process.env.APPLICATION_ID, // or accountId: 'accountId'
+    applicationKey: process.env.APPLICATION_KEY // or masterApplicationKey
 });
+
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB chunk size
 
 
@@ -44,7 +47,7 @@ async function uploadPart(fileId, partNumber, partData) {
 b2.authorize().then(() => {
     console.log('B2 authorization successful');
     return b2.getUploadUrl({
-        bucketId: '33d15916f772c01486fd0d1c'
+        bucketId: process.env.BUCKET_ID // or bucketName: 'bucketName
     })
 })
     .catch(err => {
@@ -61,7 +64,7 @@ app.get('/', (req, res) => {
  */
 app.post("/initiate-upload", async (req, res) => {
     const fileName = req.query.fileName
-    const bucketId = '33d15916f772c01486fd0d1c'; // replace with your Bucket ID
+    const bucketId = process.env.BUCKET_ID; // replace with your Bucket ID
     try {
         const response = await b2.startLargeFile({
             bucketId,
@@ -83,7 +86,7 @@ app.post("/upload", upload.single('file'), async (req, res) => {
     try {
         const filePath = req.file.path;
         const fileName = req.file.originalname;
-        const bucketId = '33d15916f772c01486fd0d1c'; // replace with your Bucket ID
+        const bucketId = process.env.BUCKET_ID; // replace with your Bucket ID
 
         // Get upload URL
         const uploadUrlResponse = await b2.getUploadUrl({ bucketId });
